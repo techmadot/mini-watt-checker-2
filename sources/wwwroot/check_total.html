@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>これまでの消費電力</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.3/dist/chart.umd.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-geWF76RCwLtnZ8qwWowPQNguL3RmwHVBC9FhGdlKrxdiJJigb/j/68SIy3Te4Bkz"
+        crossorigin="anonymous"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-9ndCyUaIbzAi2FUVXJi0CjmCapSmO7SnpJef0486qhLnuZ2cdeRhO02iuK6FUUVM" crossorigin="anonymous">
+    <style>
+        .graph-container {
+            height: 320px;
+            width: auto;
+            overflow: hidden;
+            margin: 0px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="row my-4 mx-2">
+        <div class="col-12 col-md-12">
+            <div class="card">
+                <h5 class="card-header">消費電力グラフ</h5>
+                <div class="card-body graph-container">
+                    <canvas id="myChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="row my-4 mx-2">
+        <div class="col-12 col-md-5">
+            <div class="card">
+                <h5 class="card-header">平均消費電力</h5>
+                <div class="card-body">
+                    <h5 class="card-title" id="watt-avg-value">0 W</h5>
+                    <p class="card-text" id="watt-avg-time"></p>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-md-5">
+            <div class="card">
+                <h5 class="card-header">ピーク消費電力</h5>
+                <div class="card-body">
+                    <h5 class="card-title" id="watt-peak-value"></h5>
+                    <p class="card-text" id="watt-peak-time"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="row my-4 mx-5">
+        <a class="btn btn-primary" href="./index.html" role="button">リアルタイムの消費電力を確認する</a>
+    </div>
+
+    <script>
+        var ctx = document.getElementById('myChart').getContext('2d');
+        var apihost = `http://${window.location.host}/`;
+
+        function makeDateString(date) {
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            const timeString = hours + ":" + minutes + ":" + seconds;
+            return timeString;
+        }
+
+        function prepareChart() {
+            // グラデーションの設定
+            const gradient = ctx.createLinearGradient(0, 0, 0, 500);
+            gradient.addColorStop(0, 'crimson');
+            gradient.addColorStop(1, 'rgba(255,255,255,0)');
+
+            const optionsData = {
+                plugins: {
+                    title: {
+                        display: false,
+                        text: '消費電力'
+                    },
+                    legend: {
+                        display: false
+                    }
+                },
+                animation: {
+                    duration: 0
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            autoSkip: true,
+                            maxTicksLimit: 5,
+                        },
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: '消費電力'
+                        }
+                    }
+                },
+                responsive: true,
+                maintainAspectRatio: false
+            };
+
+            var chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [{
+                        label: 'watt Data',
+                        data:  [],
+                        fill: 'start',
+                        borderColor: 'darkred',
+                        backgroundColor: gradient,
+                        pointBackgroundColor: 'darkred',
+                        pointBorderColor: 'darkred',
+                        borderWidth: 4,
+                        lineTension: 0.2,
+                        pointRadius: [],
+                    }]
+                },
+                options: optionsData
+            });
+            return chart;
+        };
+
+        var data_peak_watt = {
+            value: 0.0,
+            time: ""
+        };
+
+        function wattString(num_value) {
+            let watt = Number(num_value);
+            watt = Math.round(watt * 10) / 10.0;
+            return String(watt) + " W";
+        }
+
+        async function receiveWattData() {
+            const res = await fetch(apihost+'api/daily');
+            const jsonData = await res.json();
+
+            peak_watt = -1;
+            average = 0;
+            for(let i=0; i < jsonData.data.length; ++i)
+            {
+              const entry = jsonData.data[i];
+              const watt_value = Number(entry.value);
+
+              chart.data.labels.push( entry.time );
+              chart.data.datasets[0].data.push( watt_value );
+              if (peak_watt < watt_value)
+              {
+                peak_watt = watt_value;
+              }
+              average += watt_value;
+            }
+            if (jsonData.data.length > 0)
+            {
+              average /= jsonData.data.length;
+            }
+            const avg_value = document.getElementById('watt-avg-value');
+            avg_value.innerText = wattString(average);
+            const peak_value = document.getElementById('watt-peak-value');
+            peak_value.innerText = wattString(peak_watt);
+
+            chart.update();
+        }
+
+        chart = prepareChart();
+        receiveWattData();
+
+    </script>
+</body>
+
+</html>

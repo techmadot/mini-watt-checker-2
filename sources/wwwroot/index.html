@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chart.js グラフの表示</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.3/dist/chart.umd.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-geWF76RCwLtnZ8qwWowPQNguL3RmwHVBC9FhGdlKrxdiJJigb/j/68SIy3Te4Bkz"
+        crossorigin="anonymous"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-9ndCyUaIbzAi2FUVXJi0CjmCapSmO7SnpJef0486qhLnuZ2cdeRhO02iuK6FUUVM" crossorigin="anonymous">
+    <style>
+        .graph-container {
+            height: 320px;
+            width: auto;
+            overflow: hidden;
+            margin: 0px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="row my-4 mx-2">
+        <div class="col-12 col-md-12">
+            <div class="card">
+                <h5 class="card-header">消費電力グラフ</h5>
+                <div class="card-body graph-container">
+                    <canvas id="myChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="row my-4 mx-2">
+        <div class="col-12 col-md-4">
+            <div class="card">
+                <h5 class="card-header">消費電力</h5>
+                <div class="card-body">
+                    <h5 class="card-title" id="watt-curr-value">0 W</h5>
+                    <p class="card-text" id="watt-curr-time"></p>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-md-4">
+            <div class="card">
+                <h5 class="card-header">平均消費電力</h5>
+                <div class="card-body">
+                    <h5 class="card-title" id="watt-avg-value">0 W</h5>
+                    <p class="card-text" id="watt-avg-time"></p>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-md-4">
+            <div class="card">
+                <h5 class="card-header">ピーク消費電力</h5>
+                <div class="card-body">
+                    <h5 class="card-title" id="watt-peak-value"></h5>
+                    <p class="card-text" id="watt-peak-time"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="row my-4 mx-5">
+        <a class="btn btn-primary" href="./check_total.html" role="button">これまでの消費電力を確認する</a>
+    </div>
+
+
+    
+    <script>
+        var ctx = document.getElementById('myChart').getContext('2d');
+        var wshost = `ws://${window.location.host}/ws/`;
+
+        function makeDateString(date) {
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            const timeString = hours + ":" + minutes + ":" + seconds;
+            return timeString;
+        }
+
+        function prepareChart() {
+            // グラデーションの設定
+            const gradient = ctx.createLinearGradient(0, 0, 0, 500);
+            gradient.addColorStop(0, 'royalblue');
+            gradient.addColorStop(1, 'rgba(255,255,255,0)');
+
+            var initialTimeLabels = [];
+
+            const optionsData = {
+                plugins: {
+                    title: {
+                        display: false,
+                        text: '消費電力（リアルタイム表示）'
+                    },
+                    legend: {
+                        display: false
+                    }
+                },
+                animation: {
+                    duration: 0
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            autoSkip: true,
+                            maxTicksLimit: 5,
+                        },
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: '消費電力'
+                        }
+                    }
+                },
+                responsive: true,
+                maintainAspectRatio: false
+            };
+
+            var chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: initialTimeLabels,
+                    datasets: [{
+                        label: 'Real-time Data',
+                        data: Array(180).fill(0),
+                        fill: 'start',
+                        borderColor: 'darkblue',
+                        backgroundColor: gradient,
+                        pointBackgroundColor: 'darkblue',
+                        pointBorderColor: 'darkblue',
+                        borderWidth: 4,
+                        lineTension: 0.2,
+                        pointRadius: Array(180).fill(0),
+                        pointHoverRadius: initialTimeLabels.map((_, index) => index % 12 === 0 ? 3 : 0)
+                    }]
+                },
+                options: optionsData
+            });
+            return chart;
+        };
+
+
+        var dataIndex = 0;
+        var socket = null;
+        var data_peak_watt = {
+            value: 0.0,
+            time: ""
+        };
+
+        function wattString(num_value) {
+            let watt = Number(num_value);
+            watt = Math.round(watt * 10) / 10.0;
+            return String(watt) + " W";
+        }
+
+        function startReceiveWattData() {
+            socket = new WebSocket(wshost);
+
+            socket.onmessage = function (event) {
+                var data = JSON.parse(event.data);
+                var dateStr = String(data.date).split(' ')[1]
+
+                if (data_peak_watt.value < Number(data.value))
+                {
+                    const peak_value = document.getElementById('watt-peak-value');
+                    peak_value.innerText = wattString(data.value);
+                    const peak_time = document.getElementById('watt-peak-time');
+                    peak_time.innerText = data.date;
+                    data_peak_watt.value = Number(data.value);
+                }
+
+                {
+                    const curr_value = document.getElementById('watt-curr-value');
+                    curr_value.innerText = wattString(data.value);
+                    const curr_time = document.getElementById('watt-curr-time');
+                    curr_time.innerText = data.date;
+                }
+
+                if (dataIndex ==0)
+                {
+                    // 初回のデータを受け取ったら、未来の時刻までの軸ラベルを設定.
+                    var initialTimeLabels = [];
+                    const now = new Date(String(data.date));
+                    for (var i = 0; i < 180; i++) {
+                        const date = new Date(now.getTime() + i * 5 * 1000);
+                        initialTimeLabels.push(makeDateString(date));
+                    }
+                    chart.data.labels = initialTimeLabels;
+                }
+
+
+                if (dataIndex > 0)
+                {
+                    let current_total = 0.0;
+                    (chart.data.datasets[0].data).forEach(element => {
+                        current_total += element;
+                    });
+
+                    let count = Math.min(dataIndex, chart.data.datasets[0].data.length);
+                    current_total /= count;
+                    // 小数第2位以降は捨てる.
+                    current_total = Math.round(current_total * 10) / 10.0
+                    const avg_value = document.getElementById('watt-avg-value');
+                    avg_value.innerText = current_total + ' W';
+                    const avg_time = document.getElementById('watt-avg-time');
+                    if (avg_time.innerText == '') 
+                    {
+                        avg_time.innerText = chart.data.labels[0] + ' ～';
+                    }
+                }
+
+                if (dataIndex < 180) {
+
+                    chart.data.labels[dataIndex] = dateStr;
+                    chart.data.datasets[0].data[dataIndex] = data.value;
+                    if (dataIndex % 12 === 0) {
+                        chart.data.datasets[0].pointRadius[dataIndex] = 3;
+                    }
+                    dataIndex++;
+                } else {
+                    chart.data.labels.push(dateStr);
+                    chart.data.datasets[0].data.push(data.value);
+                    chart.data.datasets[0].pointRadius.push(dataIndex % 12 === 0 ? 3 : 0);
+                    dataIndex++;
+
+                    if (chart.data.labels.length > 360) {
+                        chart.data.labels.shift();
+                        chart.data.datasets[0].data.shift();
+                        chart.data.datasets[0].pointRadius.shift();
+                    }
+                }
+                chart.update();
+            };
+        }
+
+        chart = prepareChart();
+        startReceiveWattData();
+
+    </script>
+</body>
+
+</html>
